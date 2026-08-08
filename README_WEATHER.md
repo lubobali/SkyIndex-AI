@@ -3,6 +3,10 @@
 Technical companion to [README.md](README.md). Covers the source choice and why,
 the schema decisions, and the end-to-end pipeline.
 
+**Live app:** https://skyindex-ai-1352785079224954.aws.databricksapps.com
+(Databricks workspace auth — screenshots in [README.md](README.md#it-running))
+**Source:** https://github.com/lubobali/SkyIndex-AI
+
 ---
 
 ## 0. Where everything is

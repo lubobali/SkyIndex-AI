@@ -7,6 +7,15 @@
 [![postgres](https://img.shields.io/badge/pgvector-0.8.0-4da3ff)](#)
 [![licence](https://img.shields.io/badge/licence-MIT-8b9bb8)](LICENSE.txt)
 
+**Live app:** https://skyindex-ai-1352785079224954.aws.databricksapps.com
+&nbsp;·&nbsp; **Source:** https://github.com/lubobali/SkyIndex-AI
+
+> The deployed app sits behind Databricks workspace authentication, so it opens
+> only for signed-in members of that workspace. [Screenshots of it
+> running](#it-running) are below, and the whole pipeline reproduces from this
+> repository against any Postgres with pgvector — see
+> [README_WEATHER.md](README_WEATHER.md).
+
 The National Weather Service publishes a large, continuously changing body of
 free text: watch and warning products, their protective-action instructions,
 and multi-day forecast discussions. It is written for people, not machines.

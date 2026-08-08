@@ -21,7 +21,54 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+def _project_root() -> str:
+    """Locate the project root without depending on __file__.
+
+    Databricks serverless runs a job's Python file through
+    exec(compile(f.read(), filename, "exec")), which never binds __file__ in
+    the executing namespace - so os.path.abspath(__file__) raises NameError
+    before a single import has run. Notebooks have the same gap.
+
+    Tries, in order: __file__, sys.argv[0], SKYINDEX_ROOT, then walks up from
+    the working directory. A candidate counts only if repository.py is
+    actually in it, so a wrong guess is rejected rather than silently used.
+    """
+    candidates = []
+
+    try:
+        candidates.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    except NameError:
+        pass
+
+    if sys.argv and sys.argv[0]:
+        script = os.path.abspath(sys.argv[0])
+        candidates.append(os.path.dirname(os.path.dirname(script)))
+        candidates.append(os.path.dirname(script))
+
+    if os.environ.get("SKYINDEX_ROOT"):
+        candidates.append(os.environ["SKYINDEX_ROOT"])
+
+    probe = os.getcwd()
+    for _ in range(8):
+        candidates.append(probe)
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(os.path.join(candidate, "repository.py")):
+            return candidate
+
+    raise RuntimeError(
+        "Could not locate the SkyIndex-AI project root. Set SKYINDEX_ROOT to "
+        f"the directory containing repository.py. Tried: {candidates}"
+    )
+
+
+_PROJECT_ROOT = _project_root()
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import embeddings  # noqa: E402
 import repository  # noqa: E402

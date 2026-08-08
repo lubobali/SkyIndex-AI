@@ -14,6 +14,18 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Quiet the model loader before it is imported. Its progress bars and hub
+# warnings are written to stderr mid-report, which interleaves with the output
+# below and makes the result hard to read.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+import logging  # noqa: E402
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 import embeddings  # noqa: E402
 import lakebase  # noqa: E402
 import repository  # noqa: E402
@@ -72,6 +84,10 @@ def main() -> int:
     stats = repository.stats()
     for key, value in stats.items():
         print(f"  {key:<20} {value}")
+
+    # Load the model BEFORE the section header, so any remaining loader
+    # chatter lands above the results rather than inside them.
+    embeddings.get_encoder()
 
     heading("5. Live retrieval")
     query = "flash flood risk this weekend"

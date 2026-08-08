@@ -65,7 +65,7 @@ def test_search_returns_ranked_results(client, stub_search):
     assert body["count"] == 1
 
     hit = body["results"][0]
-    for field in ("location", "headline", "chunk_text", "similarity"):
+    for field in ("location", "headline", "chunk_text", "similarity", "narrative_text"):
         assert field in hit, f"the response contract requires {field}"
     assert hit["similarity"] == 0.8231
 

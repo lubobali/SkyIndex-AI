@@ -57,6 +57,23 @@ The second example is the one worth dwelling on. The forecast text never says
 
 ---
 
+## It running
+
+| | |
+| --- | --- |
+| ![search UI with generated answer](screenshots/01-search-ui-with-generated-answer.png) | ![ranked results](screenshots/02-search-results-ranked.png) |
+| **Search + generated answer.** Live NWS data — a Flash Flood Warning issued 7:57 PM MDT that night. The model answered from the passages and said outright that they *"do not contain information about flash flood risk for the broader weekend period"* rather than inventing one. | **Ranked results.** Both source types in one list, five distinct documents, similarity per hit. |
+| ![schema verified](screenshots/03-schema-pgvector-hnsw-verified.png) | ![lakebase embeddings](screenshots/09-lakebase-weather-embeddings-vector384.png) |
+| **The vector store, verified.** pgvector 0.8.0, both tables, `vector(384)`, HNSW on `vector_cosine_ops`. | **Real vectors in Lakebase.** `embedding vector(384)` holding actual values, viewed in Databricks. |
+| ![tests](screenshots/04-test-suite-221-passing.png) | ![integration tests](screenshots/05-integration-tests-against-lakebase.png) |
+| **221 tests.** | **19 integration tests** executing real SQL against real Lakebase. |
+| ![sync and embed](screenshots/06-sync-and-incremental-embed.png) | ![benchmark](screenshots/07-hnsw-benchmark-results.png) |
+| **Incremental by design.** 130 documents re-synced, **zero** re-embedded, because nothing had changed. | **HNSW benchmark**, timed server-side with `EXPLAIN (ANALYZE)`. |
+| ![documents table](screenshots/08-lakebase-weather-documents.png) | ![deployments](screenshots/10-databricks-app-deployments.png) |
+| **`weather_documents` in Lakebase.** Note the stable ids (`forecast:BOU/63,61:…`) and coordinates rounded to 4 decimals. | **Deployed on Databricks Apps**, every step green. |
+
+---
+
 ## Architecture
 
 ```

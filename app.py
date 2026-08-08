@@ -224,6 +224,11 @@ def _serialize(results: list[dict]) -> list[dict]:
                 "severity": result.get("severity"),
                 "chunk_index": result.get("chunk_index"),
                 "chunk_text": result.get("chunk_text"),
+                # The full document text alongside the matching chunk. The
+                # chunk is what scored; the narrative is what it came from,
+                # and a caller showing a passage usually wants to be able to
+                # expand it without a second request.
+                "narrative_text": result.get("narrative_text"),
                 "similarity": round(float(result["similarity"]), 4),
                 "effective_at": _isoformat(result.get("effective_at")),
                 "expires_at": _isoformat(result.get("expires_at")),

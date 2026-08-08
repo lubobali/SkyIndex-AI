@@ -5,6 +5,89 @@ the schema decisions, and the end-to-end pipeline.
 
 ---
 
+## 0. Where everything is
+
+Every required behaviour, and where it lives.
+
+### Part 1 — Harvest
+
+| Required | Implemented in | Evidence |
+| --- | --- | --- |
+| Client module resolving locations to an NWS gridpoint via `GET /points/{lat},{lon}` | `weather_client.py::NWSClient.resolve` | screenshot 6 |
+| Accepts city/state **and** lat/lon | `weather_client.py::parse_location` | `test_weather_client.py` (11 cases) |
+| Fetches active alerts | `NWSClient.fetch_alerts` → `/alerts/active?area=` | screenshot 6 |
+| Fetches forecast narrative | `NWSClient.fetch_forecast` → `/gridpoints/{office}/{x},{y}/forecast` | screenshot 6 |
+| `id` — stable dedup key | alert URN; forecast `sha256(location\|start\|end)` | screenshot 8 |
+| `location` | `weather_documents.location` | screenshot 8 |
+| `source_type` — "alert" / "forecast" | `CHECK IN ('alert','forecast')` | screenshot 8 |
+| `headline` / `event` | both stored as separate columns | screenshot 3 |
+| `narrative_text` — the free text embedded | `weather_documents.narrative_text` | screenshot 3 |
+| `issued_at` / `effective_at` | both, plus `expires_at` | screenshot 3 |
+| `payload` — raw JSON for provenance | `JSONB NOT NULL` | screenshot 3 |
+| `synced_at` | `TIMESTAMPTZ DEFAULT now()` | screenshot 3 |
+| Written into `weather_documents` | `schema.sql`, `repository.upsert_documents` | screenshots 3, 8 |
+| Same connection pattern as `lakebase.py` — `get_connection()` context manager, psycopg2 + `RealDictCursor` | `lakebase.py::get_connection` | — |
+| `POST /weather/sync` with `{"locations": [...], "limit": 50}`, returns a count | `app.py::sync_weather` | screenshot 6 |
+
+### Part 2 — Vectorize
+
+| Required | Implemented in | Evidence |
+| --- | --- | --- |
+| Ingestion script, plain Python + psycopg2 | `notebooks/ingest_weather_embeddings.py` | screenshot 6 |
+| **No `spark.write.jdbc`** | no Spark anywhere in the project | — |
+| Reads unembedded rows via `get_connection()` | `repository.fetch_unembedded_documents` | screenshot 6 |
+| Chunks `narrative_text`, 800 / 100 sliding window | `embeddings.chunk_text` | `test_embeddings.py` (17 cases) |
+| Embeds with `sentence-transformers/all-MiniLM-L6-v2`, 384-dim | `embeddings.embed_texts` | screenshot 3 |
+| `weather_embeddings.id` | `{document_id}::{chunk_index}` | screenshot 9 |
+| `document_id` FK → `weather_documents.id` | `REFERENCES ... ON DELETE CASCADE` | screenshot 3 |
+| `chunk_index` | `INTEGER NOT NULL` | screenshot 9 |
+| `chunk_text` | `TEXT NOT NULL` | screenshot 9 |
+| `embedding vector(384)` | real pgvector column | screenshots 3, 9 |
+| `model_name` | `TEXT NOT NULL` | screenshot 3 |
+| `created_at` | `TIMESTAMPTZ DEFAULT now()` | screenshot 3 |
+| Written with `execute_values` | `repository.replace_document_embeddings` | — |
+| Cast with `%s::vector` | in the `execute_values` template | `test_repository.py` |
+| HNSW index `USING hnsw (embedding vector_cosine_ops)` | `schema.sql` | screenshot 3 |
+| pgvector extension | `CREATE EXTENSION IF NOT EXISTS vector` | screenshot 3 |
+
+### Part 3 — Retrieve
+
+| Required | Implemented in | Evidence |
+| --- | --- | --- |
+| `POST /weather/search` with `{"query": ..., "top_k": 5}` | `app.py::search_weather` | screenshots 1, 2 |
+| Query embedded with the **same** model | `embeddings.embed_query` | — |
+| Model loaded once at module level, not per request | `embeddings.get_encoder`, warmed by `app.warm_encoder` | — |
+| Cosine search via `<=>`, executed via psycopg2 | `repository.search` | screenshots 1, 2 |
+| Returns `location`, `headline`, `chunk_text`, `similarity` | `app._serialize` (also `narrative_text`, `event`, `source_type`) | screenshot 2 |
+| Edge case: empty `weather_embeddings` | 200 with `count: 0` | `test_app.py` |
+| Edge case: malformed / missing query | 400 with a message | `test_app.py` (7 cases) |
+| Edge case: `top_k` clamped 1–20 | `validation.clean_top_k` | `test_app.py` (9 cases) |
+
+### Deliverables
+
+| Required | File |
+| --- | --- |
+| `weather_client.py` | ✅ |
+| Updated `app.py` with both endpoints | ✅ |
+| DDL / migration for both tables | `schema.sql` + `lakebase.apply_schema()` |
+| psycopg2 embedding ingestion script | `notebooks/ingest_weather_embeddings.py` |
+| `README_WEATHER.md` — source + why, schema decisions, how to run, limitations | this file, sections 1–6 |
+
+### Stretch goals — all five
+
+| # | Goal | Implemented in | Evidence |
+| --- | --- | --- | --- |
+| 1 | `GET /weather/search?query=` with an LLM summary | `app.py::search_weather_with_summary`, `rag.py` | screenshot 1 |
+| 2 | Upsert on `id` so re-sync does not duplicate | `repository.upsert_documents` — `ON CONFLICT (id) DO UPDATE` | screenshot 6 |
+| 3 | Scheduled job re-syncing every N minutes | `resources/refresh_weather_index_job.yml` (30 min), `scripts/refresh_weather_index.py` | screenshot 6 |
+| 4 | Two sources, retrieval filterable by `source_type` | alerts + forecasts; `repository.search(source_type=...)` | screenshot 2 |
+| 5 | HNSW benchmark, with vs without the index | `benchmarks/hnsw_benchmark.py` | screenshot 7 |
+
+Beyond spec: browser search UI (ARIA-labelled), pooled Lakebase connections,
+221 tests, deployed on Databricks Apps.
+
+---
+
 ## 1. Data source: the National Weather Service API
 
 **Chosen:** `api.weather.gov`

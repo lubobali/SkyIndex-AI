@@ -50,6 +50,20 @@ if _PROJECT_ROOT not in sys.path:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 logger = logging.getLogger("ingest-weather-embeddings")
 
+# Quiet the model loader before it is imported. sentence-transformers logs a
+# hub HTTP request per config file it resolves - about 20 lines - plus progress
+# bars. In a scheduled job that buries the only output that matters.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+for _noisy in (
+    "httpx", "httpcore", "urllib3", "filelock", "sentence_transformers",
+    "huggingface_hub", "huggingface_hub.utils._http", "transformers",
+):
+    logging.getLogger(_noisy).setLevel(logging.ERROR)
+
 # COMMAND ----------
 
 # DBTITLE 1,Config

@@ -24,7 +24,12 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import logging  # noqa: E402
 
-logging.getLogger("httpx").setLevel(logging.WARNING)
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+for _noisy in (
+    "httpx", "httpcore", "urllib3", "filelock", "sentence_transformers",
+    "huggingface_hub", "huggingface_hub.utils._http", "transformers",
+):
+    logging.getLogger(_noisy).setLevel(logging.ERROR)
 
 import embeddings  # noqa: E402
 import lakebase  # noqa: E402

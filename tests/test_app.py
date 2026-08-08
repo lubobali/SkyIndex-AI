@@ -349,6 +349,27 @@ def test_sync_with_no_errors_omits_the_error_key(client, stub_sync):
 # --------------------------------------------------------------------------
 
 
+def test_ui_stats_endpoint_mirrors_healthz(client, monkeypatch):
+    """The UI reads /api/stats, not /healthz. Platforms commonly reserve
+    /healthz for their own probe and never pass it through, which shows up as
+    "stats unavailable" on a completely healthy app."""
+    import app as app_module
+
+    monkeypatch.setattr(app_module.lakebase, "healthcheck", lambda: True)
+    monkeypatch.setattr(app_module.repository, "stats", lambda: {"documents": 140})
+
+    body = client.get("/api/stats").get_json()
+    assert body["status"] == "ok"
+    assert body["counts"]["documents"] == 140
+
+
+def test_ui_stats_reports_degraded_when_the_database_is_down(client, monkeypatch):
+    import app as app_module
+
+    monkeypatch.setattr(app_module.lakebase, "healthcheck", lambda: False)
+    assert client.get("/api/stats").status_code == 503
+
+
 def test_healthz_reports_ok_when_the_database_answers(client, monkeypatch):
     import app as app_module
 

@@ -183,7 +183,9 @@ function escapeHtml(value) {
 
 async function loadStats() {
   try {
-    const response = await fetch('/healthz');
+    // Not /healthz - platforms commonly reserve that path for their own
+    // liveness probe and never pass the request through to the app.
+    const response = await fetch('/api/stats');
     const body = await response.json();
     const counts = body.counts || {};
     document.getElementById('stats').innerHTML =

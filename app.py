@@ -78,8 +78,7 @@ def handle_exception(err: Exception):
 # ---------------------------------------------------------------------------
 
 
-@app.route("/healthz")
-def healthz():
+def _health_payload() -> tuple[dict, int]:
     """Liveness, plus whether Lakebase is reachable and how much is indexed.
 
     Deliberately does NOT touch the embedding model. Loading it takes seconds,
@@ -95,7 +94,31 @@ def healthz():
         except Exception:
             logger.warning("Could not read stats", exc_info=True)
 
-    return jsonify(payload), (200 if database_ok else 503)
+    return payload, (200 if database_ok else 503)
+
+
+@app.route("/healthz")
+def healthz():
+    """Health check for platform probes."""
+    payload, status = _health_payload()
+    return jsonify(payload), status
+
+
+@app.route("/api/stats")
+def api_stats():
+    """The same payload, on a path no hosting platform will claim.
+
+    `/healthz` is a de facto reserved path - Cloud Run and several other
+    platforms intercept it for their own liveness probing and never let the
+    request reach the application. The UI asking for its counts there gets the
+    platform's answer instead of ours, which surfaces as "stats unavailable"
+    on a perfectly healthy app.
+
+    Health checks keep /healthz because that is what probes look for. The UI
+    reads from here.
+    """
+    payload, status = _health_payload()
+    return jsonify(payload), status
 
 
 @app.route("/")

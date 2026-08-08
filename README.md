@@ -107,7 +107,7 @@ re-embedding because nothing had changed, and now fires every 30 minutes.
      │  weather_documents    │   raw narrative + JSONB provenance
      │  (Lakebase Postgres)  │   content_hash detects amendments
      └───────────┬───────────┘
-                 │  ingest_weather_embeddings.py
+                 │  notebooks/ingest_weather_embeddings.py
                  │  · chunk 800/100, paragraph→sentence→word boundaries
                  │  · all-MiniLM-L6-v2, 384-dim
                  │  · psycopg2 execute_values, %s::vector

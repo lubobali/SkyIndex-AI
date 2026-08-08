@@ -355,7 +355,11 @@ def test_search_deduplicates_identical_chunk_text(fake_db):
     sql, _ = fake_db.connection.find("from weather_embeddings")
 
     assert "distinct on (chunk_key)" in sql.lower()
-    assert "md5(e.chunk_text)" in sql.lower()
+    assert "md5(regexp_replace(e.chunk_text, '\\s', ''" in sql.lower(), (
+        "the dedup key must REMOVE whitespace, not collapse it: NWS hard-wraps "
+        "at ~68 columns and a wrap can land inside a URL, so collapsing to a "
+        "single space still leaves 'ozone- pollution' != 'ozone-pollution'"
+    )
 
 
 def test_search_returns_one_result_per_document(fake_db):

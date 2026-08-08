@@ -2,8 +2,8 @@
 
 **Semantic search over live National Weather Service text.**
 
-[![tests](https://img.shields.io/badge/tests-196%20passing-4dd4a0)](#tests)
-[![python](https://img.shields.io/badge/python-3.13-4da3ff)](#)
+[![tests](https://img.shields.io/badge/tests-221%20passing-4dd4a0)](#tests)
+[![python](https://img.shields.io/badge/python-3.14-4da3ff)](#)
 [![postgres](https://img.shields.io/badge/pgvector-0.8.0-4da3ff)](#)
 [![licence](https://img.shields.io/badge/licence-MIT-8b9bb8)](LICENSE.txt)
 
@@ -185,7 +185,8 @@ embeddings have cluster structure that random test vectors deliberately lack.
 ## Tests
 
 ```
-196 passing, 0.28s
+202 unit tests, 0.28s     (external boundaries mocked)
+ 19 integration tests      (real SQL against a real Lakebase)
 ```
 
 | file | covers |
@@ -195,6 +196,7 @@ embeddings have cluster structure that random test vectors deliberately lack.
 | `test_repository.py` | 32 — SQL construction, casts, conflict targets, filters |
 | `test_embeddings.py` | 37 — chunk boundaries, coverage, encoder lifecycle |
 | `test_rag.py` | 20 — context building, every degradation path |
+| `test_live_lakebase.py` | 19 — every statement executed against real Postgres (`-m live`) |
 
 Only genuine external boundaries are mocked: outbound HTTP, the Postgres wire
 protocol, the embedding model, the summarizer. Normalization, chunking, id
@@ -205,12 +207,23 @@ hand-written dicts — so a passing test means the normalizer handles the shape
 the API actually returns, including the fields nobody remembers, like an alert
 whose `instruction` is null.
 
-Two bugs came out of live testing that mocks could not have caught:
+**Four bugs came out of running it for real, none of which mocks could catch:**
 
 - `/alerts/active` rejects a `limit` parameter with a `400`. The failure is
   silent through a lenient parser: the error body has no `features` key, so
   naive code reports "no active alerts" for a state that has thirty.
 - Coordinates with more than four decimal places get a `301` redirect.
+- 35% of stored chunks were duplicates, so a top-5 could be one paragraph
+  repeated. Two of them differed by a **single space**, because a hard wrap
+  landed inside a URL.
+- `/healthz` is intercepted by the hosting platform, so the UI's request for
+  its counts never reached the app.
+
+The integration tests exist because of a fifth. A `\n` inside a Python string
+ended a `--` SQL comment early, turning the rest of the comment into bare SQL.
+Every unit test passed - a fake cursor records statements, it does not parse
+them - and the first real query died with `syntax error at or near "ozone"`.
+`test_live_lakebase.py` now executes every statement the application issues.
 
 ---
 

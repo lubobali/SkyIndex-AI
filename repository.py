@@ -293,7 +293,17 @@ def search(
                    -- fingerprints the whole narrative, and two alerts that
                    -- differ elsewhere can still share a byte-identical chunk -
                    -- which is exactly the case that was slipping through.
-                   md5(e.chunk_text) AS chunk_key,
+                   --
+                   -- Whitespace is REMOVED before hashing, not merely
+                   -- collapsed. NWS hard-wraps at ~68 columns, so the same
+                   -- sentence arrives with the line break in a different place
+                   -- depending on what preceded it. Collapsing to a single
+                   -- space is not enough: a wrap can land inside a URL, so a
+                   -- line break after "ozone-" becomes "ozone- pollution"
+                   -- while its unwrapped twin stays "ozone-pollution". Two
+                   -- chunks 393 and 394 characters long, differing by exactly
+                   -- one space, were reaching results as separate entries.
+                   md5(regexp_replace(e.chunk_text, '\\s', '', 'g')) AS chunk_key,
                    e.embedding <=> %s::vector AS distance
             FROM {EMBEDDINGS_TABLE} e
             {filter_join}

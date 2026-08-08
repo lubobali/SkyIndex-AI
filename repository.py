@@ -29,6 +29,14 @@ EMBEDDINGS_TABLE = "weather_embeddings"
 # verify_schema() checks the database agrees before any batch job starts.
 VECTOR_DIM = 384
 
+# The NWS issues one alert per county zone, so the same advisory text arrives
+# many times over with different ids - a single Colorado air quality alert
+# appeared 12 times byte-identical. Retrieval deduplicates on the chunk text, and
+# to still return top_k distinct results afterwards the candidate pool has to
+# be bigger than top_k going in.
+CANDIDATE_OVERFETCH = 10
+MIN_CANDIDATES = 100
+
 _DOCUMENT_COLUMNS = (
     "id", "location", "latitude", "longitude", "source_type", "event",
     "headline", "narrative_text", "issued_at", "effective_at", "expires_at",
@@ -264,15 +272,54 @@ def search(
         )
 
     vector = to_vector_literal(embedding)
+    candidate_limit = max(top_k * CANDIDATE_OVERFETCH, MIN_CANDIDATES)
 
-    where_clause = ""
+    filter_join = ""
     params: list[Any] = [vector]
     if source_type:
-        where_clause = "WHERE d.source_type = %s"
+        filter_join = (
+            f"JOIN {DOCUMENTS_TABLE} df ON df.id = e.document_id "
+            "AND df.source_type = %s"
+        )
         params.append(source_type)
-    params.extend([vector, top_k])
+    params.extend([vector, candidate_limit, top_k])
 
     sql = f"""
+        WITH candidates AS (
+            SELECT e.document_id,
+                   e.chunk_index,
+                   e.chunk_text,
+                   -- Grouped on the CHUNK, not the document. content_hash
+                   -- fingerprints the whole narrative, and two alerts that
+                   -- differ elsewhere can still share a byte-identical chunk -
+                   -- which is exactly the case that was slipping through.
+                   md5(e.chunk_text) AS chunk_key,
+                   e.embedding <=> %s::vector AS distance
+            FROM {EMBEDDINGS_TABLE} e
+            {filter_join}
+            ORDER BY e.embedding <=> %s::vector
+            LIMIT %s
+        ),
+        -- Two rounds of collapsing, because the corpus repeats itself in two
+        -- different ways.
+        --
+        -- 1. One result per DOCUMENT. A long alert splits into several chunks
+        --    that all score well on the same query, and five passages from one
+        --    advisory is a worse answer than five different advisories. Search
+        --    results list documents, not passages.
+        per_document AS (
+            SELECT DISTINCT ON (document_id) *
+            FROM candidates
+            ORDER BY document_id, distance
+        ),
+        -- 2. One result per distinct TEXT. NWS issues the same advisory
+        --    separately for every county zone, so identical text arrives under
+        --    many document ids and survives step 1 untouched.
+        best AS (
+            SELECT DISTINCT ON (chunk_key) *
+            FROM per_document
+            ORDER BY chunk_key, distance
+        )
         SELECT d.id AS document_id,
                d.location,
                d.headline,
@@ -282,13 +329,12 @@ def search(
                d.effective_at,
                d.expires_at,
                d.narrative_text,
-               e.chunk_index,
-               e.chunk_text,
-               1 - (e.embedding <=> %s::vector) AS similarity
-        FROM {EMBEDDINGS_TABLE} e
-        JOIN {DOCUMENTS_TABLE} d ON d.id = e.document_id
-        {where_clause}
-        ORDER BY e.embedding <=> %s::vector
+               b.chunk_index,
+               b.chunk_text,
+               1 - b.distance AS similarity
+        FROM best b
+        JOIN {DOCUMENTS_TABLE} d ON d.id = b.document_id
+        ORDER BY b.distance
         LIMIT %s
     """
     return lakebase.run_query(sql, tuple(params))

@@ -122,6 +122,14 @@ expression the planner cannot match to the index, and the query silently
 degrades to a full scan that still returns correct results — the worst kind of
 regression, because nothing looks broken.
 
+**Retrieval collapses the corpus's two kinds of repetition.** NWS issues the
+same advisory separately for every county zone — one Colorado air quality alert
+arrived 12 times, byte-identical, under 12 different ids. And a long alert
+splits into several chunks that all score well on the same query. Untreated,
+35% of stored chunks were redundant and a top-5 could be the same paragraph
+five times. Retrieval over-fetches, then collapses to one result per document
+and one per distinct text, so `top_k` means five different answers.
+
 **Chunk boundaries are a presentation decision.** `chunk_text` is what a user
 reads as the retrieved passage, so a window ending mid-clause is a visible
 defect. The chunker prefers a paragraph break, then a sentence break, then a

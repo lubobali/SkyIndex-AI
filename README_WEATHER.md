@@ -290,6 +290,15 @@ alert set and hourly forecasts for a few hundred gridpoints would put it well
 past that; the code already supports it, it just needs more locations and more
 API budget.
 
+**Near-duplicate text still repeats in results.** Retrieval collapses exact
+duplicates and limits results to one per document, which fixed the worst of it.
+But NWS sometimes issues the same advisory for adjacent zones with a word or
+two different — same meaning, different bytes — and those survive exact
+matching. Catching them needs either a similarity threshold between result
+vectors (drop a result within ~0.02 cosine of one already shown) or clustering
+at ingest time. Both are real work and neither is free: too aggressive and
+genuinely distinct alerts for neighbouring counties get suppressed.
+
 **No time filtering in retrieval.** An expired Flash Flood Warning is still
 indexed and can still be returned. `expires_at` is stored and indexed, so the
 fix is a `WHERE expires_at > now()` predicate, but combining a filter with an

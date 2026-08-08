@@ -289,7 +289,7 @@ def test_search_returns_similarity_not_distance(fake_db):
     results = repository.search([0.1] * repository.VECTOR_DIM, top_k=1)
     sql, _ = fake_db.connection.find("from weather_embeddings")
 
-    assert "1 - (e.embedding <=> %s::vector) as similarity" in sql.lower()
+    assert "1 - b.distance as similarity" in sql.lower()
     assert results[0]["similarity"] == 0.82
 
 
@@ -298,7 +298,7 @@ def test_search_joins_documents_for_context(fake_db):
     repository.search([0.1] * repository.VECTOR_DIM)
     sql, _ = fake_db.connection.find("from weather_embeddings")
 
-    assert "join weather_documents d on d.id = e.document_id" in sql.lower()
+    assert "join weather_documents d on d.id = b.document_id" in sql.lower()
     for column in ("location", "headline", "chunk_text"):
         assert column in sql.lower()
 
@@ -310,14 +310,20 @@ def test_search_passes_top_k_as_the_limit(fake_db):
     assert params[-1] == 7
 
 
-def test_search_without_a_filter_adds_no_where_clause(fake_db):
+def test_search_without_a_filter_adds_no_filter_predicate(fake_db):
     """Building the filter into the SQL only when asked keeps the unfiltered
     query - the common one - free of a predicate the planner has to reason
-    about alongside the index scan."""
+    about alongside the index scan.
+
+    Asserts on the filter join specifically rather than on the word "where",
+    which also appears inside prose like "differ elsewhere" in a comment.
+    """
     fake_db.queue([search_row()])
     repository.search([0.1] * repository.VECTOR_DIM)
-    sql, _ = fake_db.connection.find("from weather_embeddings")
-    assert "where" not in sql.lower()
+    sql, params = fake_db.connection.find("from weather_embeddings")
+
+    assert "df.source_type" not in sql.lower()
+    assert not [p for p in params if p in ("alert", "forecast")]
 
 
 def test_search_filters_by_source_type(fake_db):
@@ -325,7 +331,7 @@ def test_search_filters_by_source_type(fake_db):
     repository.search([0.1] * repository.VECTOR_DIM, source_type="forecast")
     sql, params = fake_db.connection.find("from weather_embeddings")
 
-    assert "where d.source_type = %s" in sql.lower()
+    assert "df.source_type = %s" in sql.lower()
     assert "forecast" in params
 
 
@@ -338,6 +344,52 @@ def test_search_on_an_empty_index_returns_nothing_rather_than_raising(fake_db):
     """R21 - nothing synced yet is a normal state, not a failure."""
     fake_db.queue([])
     assert repository.search([0.1] * repository.VECTOR_DIM) == []
+
+
+def test_search_deduplicates_identical_chunk_text(fake_db):
+    """NWS issues the same advisory separately for each county zone - one Air
+    Quality Alert appeared 12 times with byte-identical text. Without dedup the
+    top-5 is the same paragraph five times instead of five different answers."""
+    fake_db.queue([search_row()])
+    repository.search([0.1] * repository.VECTOR_DIM, top_k=5)
+    sql, _ = fake_db.connection.find("from weather_embeddings")
+
+    assert "distinct on (chunk_key)" in sql.lower()
+    assert "md5(e.chunk_text)" in sql.lower()
+
+
+def test_search_returns_one_result_per_document(fake_db):
+    """A long alert splits into several chunks that all score well on the same
+    query. Five passages from one advisory is a worse answer than five
+    different advisories - search results list documents, not passages."""
+    fake_db.queue([search_row()])
+    repository.search([0.1] * repository.VECTOR_DIM, top_k=5)
+    sql, _ = fake_db.connection.find("from weather_embeddings")
+
+    assert "distinct on (document_id)" in sql.lower()
+    assert "order by document_id, distance" in sql.lower()
+
+
+def test_search_overfetches_before_deduplicating(fake_db):
+    """Deduplicating after LIMIT top_k would return fewer than top_k rows.
+    The candidate pool has to be larger than the requested result count."""
+    fake_db.queue([search_row()])
+    repository.search([0.1] * repository.VECTOR_DIM, top_k=5)
+    _, params = fake_db.connection.find("from weather_embeddings")
+
+    numeric = [p for p in params if isinstance(p, int)]
+    assert numeric[0] > 5, "candidate pool must exceed top_k"
+    assert numeric[-1] == 5, "the final LIMIT is still top_k"
+
+
+def test_search_keeps_the_best_scoring_copy_of_a_duplicate(fake_db):
+    """DISTINCT ON keeps the first row per group, so the inner ordering must
+    put the closest match first - otherwise an arbitrary copy survives."""
+    fake_db.queue([search_row()])
+    repository.search([0.1] * repository.VECTOR_DIM, top_k=5)
+    sql, _ = fake_db.connection.find("from weather_embeddings")
+
+    assert "order by chunk_key, distance" in sql.lower()
 
 
 def test_search_binds_the_same_vector_to_both_placeholders(fake_db):

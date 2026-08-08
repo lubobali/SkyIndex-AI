@@ -331,11 +331,31 @@ databricks bundle deploy -t dev
 databricks bundle run refresh_weather_index -t dev
 ```
 
-Ships **PAUSED**, on a 30-minute schedule. Run it once by hand and confirm the
-output before unpausing — an unattended job that has never succeeded is just a
-scheduled way to fail. Thirty minutes rather than daily because alerts are the
-perishable half of this corpus: a Flash Flood Warning is issued, amended, and
-expires inside a few hours.
+**Deployed and running every 30 minutes.** Thirty rather than daily because
+alerts are the perishable half of this corpus: a Flash Flood Warning is issued,
+amended, and expires inside a few hours, so a daily index would mostly answer
+questions about weather that has already happened.
+
+It was run manually first, confirmed green, and only then put on the timer. The
+bundle definition still ships `pause_status: PAUSED` so that deploying it into
+a fresh workspace does not start firing before anyone has verified it there.
+
+Three things had to be solved to make it run on Databricks at all, none of
+which show up when running the same script locally:
+
+1. **`__file__` is not defined.** Serverless executes a job's Python file via
+   `exec(compile(...))`, so the usual `os.path.abspath(__file__)` raises
+   `NameError` before the first import. `_project_root()` resolves the path
+   without it.
+2. **`psycopg2` cannot be installed.** The runtime already ships psycopg2
+   2.9.11 in a directory pip refuses to uninstall from. Installing
+   `psycopg2-binary` on top leaves two builds of the same native extension in
+   one interpreter and `import psycopg2` aborts the process with SIGABRT — not
+   an exception. Use the runtime's copy; see `requirements-databricks.txt`.
+3. **A script task cannot restart its own interpreter.** `sentence-transformers`
+   still needs installing at runtime, and any pip install into a live kernel
+   needs a restart afterwards. Hence a notebook task wrapping the same
+   `refresh()` function rather than a `spark_python_task`.
 
 The click-path equivalent, for anyone without the CLI: **Workflows → Create Job
 → Python script task → `scripts/refresh_weather_index.py` → Add trigger →

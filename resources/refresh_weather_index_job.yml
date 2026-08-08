@@ -5,8 +5,12 @@
 # few hours. A daily refresh would leave the index mostly answering questions
 # about weather that has already happened.
 #
-# Ships PAUSED. Run it once by hand, confirm the output, then unpause - an
-# unattended job that has never succeeded is just a scheduled way to fail.
+# The deployed job runs every 30 minutes and is UNPAUSED - it was run by hand
+# first, confirmed green, and only then put on the timer. An unattended job
+# that has never succeeded is just a scheduled way to fail.
+#
+# This bundle definition keeps pause_status: PAUSED so that deploying it into a
+# fresh workspace does not start firing before anyone has verified it there.
 
 resources:
   jobs:

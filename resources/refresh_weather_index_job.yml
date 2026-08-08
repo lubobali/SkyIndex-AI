@@ -20,6 +20,12 @@ resources:
         - task_key: refresh
           spark_python_task:
             python_file: ../scripts/refresh_weather_index.py
+            parameters:
+              # api.weather.gov requires a descriptive User-Agent and the
+              # client refuses to start without one. A Workflow task has no
+              # environment of its own, so it is passed as a parameter.
+              - "--user-agent"
+              - "(SkyIndex-AI, lubobali23@gmail.com)"
           environment_key: default
 
       environments:

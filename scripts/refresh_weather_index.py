@@ -107,7 +107,23 @@ def main() -> int:
     parser.add_argument("--locations", nargs="*", default=None)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--source-types", nargs="*", default=list(SOURCE_TYPES))
+    # api.weather.gov requires a descriptive User-Agent and NWSClient refuses to
+    # start without one. A Databricks Workflow task has no environment of its
+    # own, so the scheduler passes it as a parameter instead.
+    parser.add_argument(
+        "--user-agent",
+        default=None,
+        help="overrides NWS_USER_AGENT, for schedulers that cannot set env vars",
+    )
     args = parser.parse_args()
+
+    if args.user_agent:
+        os.environ["NWS_USER_AGENT"] = args.user_agent
+        # weather_client reads the env var at import time into a module
+        # constant, so setting it now is not enough on its own.
+        import weather_client
+
+        weather_client.DEFAULT_USER_AGENT = args.user_agent
 
     refresh(
         locations=args.locations or DEFAULT_LOCATIONS,

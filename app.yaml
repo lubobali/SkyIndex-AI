@@ -1,0 +1,57 @@
+# Databricks Apps deployment config for SkyIndex-AI.
+#
+# The Lakebase connection URL is NOT here. lakebase.py resolves it at runtime
+# from the secret scope named below, so no credential appears in source control
+# or in this file. Run setup_secrets.py once before the first deploy.
+
+command:
+  - "python"
+  - "app.py"
+
+env:
+  # Secret scopes are workspace-wide. A generic name like "database" may
+  # already exist and be owned by someone else, and a scope you do not own
+  # cannot be written to. Hence the project-specific name.
+  - name: LAKEBASE_SECRET_SCOPE
+    value: "lubo-skyindex"
+  - name: LAKEBASE_SECRET_KEY
+    value: "lakebase-url"
+
+  # Databricks Apps run a single container, so a small pool is plenty and
+  # stays well clear of the Lakebase connection limit.
+  - name: LAKEBASE_POOL_MIN
+    value: "1"
+  - name: LAKEBASE_POOL_MAX
+    value: "8"
+
+  # api.weather.gov rejects requests without a descriptive User-Agent naming
+  # the application and a contact address. This is a documented requirement.
+  - name: NWS_USER_AGENT
+    value: "(SkyIndex-AI, lubobali23@gmail.com)"
+
+  - name: EMBEDDING_MODEL
+    value: "sentence-transformers/all-MiniLM-L6-v2"
+  - name: CHUNK_SIZE
+    value: "800"
+  - name: CHUNK_OVERLAP
+    value: "100"
+
+  # Load the model in a background thread at startup so the first search does
+  # not pay for it. /healthz stays responsive while this runs.
+  - name: WARM_ENCODER
+    value: "true"
+
+  # Managed model used for the generated answer, addressed by its Unity
+  # Catalog name through the AI Gateway. If the workspace cannot serve it,
+  # search still returns ranked results and "summary" is null.
+  - name: SUMMARY_ENABLED
+    value: "true"
+  - name: SUMMARY_ENDPOINT
+    value: "system.ai.claude-haiku-4-5"
+
+  # The model cache must live somewhere writable in the app container.
+  - name: HF_HOME
+    value: "/tmp/.cache/huggingface"
+
+  - name: LOG_LEVEL
+    value: "INFO"

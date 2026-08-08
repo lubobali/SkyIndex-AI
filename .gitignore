@@ -1,0 +1,15 @@
+.env
+*.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+*.zip
+
+# benchmarks/results/ is deliberately NOT ignored - README.md links to the
+# published report, so it has to be in the repo.

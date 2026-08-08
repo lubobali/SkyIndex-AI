@@ -1,0 +1,48 @@
+# Scheduled refresh of the weather index.
+#
+# Every 30 minutes rather than daily, because alerts are the perishable half of
+# this corpus: a Flash Flood Warning is issued, amended, and expires inside a
+# few hours. A daily refresh would leave the index mostly answering questions
+# about weather that has already happened.
+#
+# Ships PAUSED. Run it once by hand, confirm the output, then unpause - an
+# unattended job that has never succeeded is just a scheduled way to fail.
+
+resources:
+  jobs:
+    refresh_weather_index:
+      name: "SkyIndex-AI - refresh weather index"
+      description: >-
+        Harvests active NWS alerts and gridpoint forecasts into weather_documents,
+        then embeds any document that is new or whose text has been amended.
+
+      tasks:
+        - task_key: refresh
+          spark_python_task:
+            python_file: ../scripts/refresh_weather_index.py
+          environment_key: default
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - sentence-transformers
+              - psycopg2-binary
+              - requests
+              - databricks-sdk
+
+      schedule:
+        # Every 30 minutes.
+        quartz_cron_expression: "0 0,30 * * * ?"
+        timezone_id: "America/Chicago"
+        pause_status: PAUSED
+
+      email_notifications:
+        on_failure:
+          - lubobali23@gmail.com
+
+      # A refresh that overruns its own interval means something is wrong
+      # upstream; queueing another on top of it would compound the problem.
+      max_concurrent_runs: 1
+      timeout_seconds: 1800

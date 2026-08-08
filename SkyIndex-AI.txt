@@ -1,0 +1,306 @@
+================================================================================
+SKYINDEX-AI — DETAILED BUILD PLAN
+================================================================================
+
+Author: Lubo Bali
+Date: 2026-08-07
+Version: 1.0
+
+--------------------------------------------------------------------------------
+WHAT IS SKYINDEX-AI
+--------------------------------------------------------------------------------
+A semantic search engine over live National Weather Service text.
+
+The NWS publishes a large, continuously changing body of free-text weather
+narrative: watch and warning products, their protective-action instructions,
+and multi-day forecast discussions. It is written for humans, not machines.
+There is no field you can filter on to answer "which of these is about flash
+flooding near rivers this weekend" — the answer is buried in prose.
+
+SkyIndex-AI harvests that prose, embeds it, stores the vectors in Postgres
+(Lakebase + pgvector), and exposes a retrieval API:
+
+    POST /weather/search  {"query": "flash flood risk this weekend"}
+    -> ranked weather documents by cosine similarity, with a generated
+       natural-language summary of what the top matches actually say.
+
+Pipeline:
+
+    api.weather.gov
+        |  harvest (weather_client.py)
+        v
+    weather_documents   (raw narrative + provenance payload, Lakebase)
+        |  chunk + embed (ingest_weather_embeddings.py, all-MiniLM-L6-v2)
+        v
+    weather_embeddings  (vector(384) + HNSW index, pgvector)
+        |  retrieve (<=> cosine)
+        v
+    POST /weather/search  ->  ranked results  ->  RAG summary
+
+--------------------------------------------------------------------------------
+WHY THIS PROJECT
+--------------------------------------------------------------------------------
+TWO outcomes from one build, same as every previous one:
+  1. A complete, correct implementation of the pipeline.
+  2. A public portfolio piece: "unstructured text -> pgvector -> retrieval API",
+     which is the single most-asked-for shape of work in AI/Data Eng job
+     descriptions right now.
+
+Recruiter angle: this is a full RAG data pipeline that runs on real, live,
+messy public data — not a toy corpus of static text files. It shows the
+ingestion, the vector store design, the index tuning, and the serving layer.
+
+--------------------------------------------------------------------------------
+BUILDING RULES — RECR LOOP (TDD, MATT HARRISON)
+--------------------------------------------------------------------------------
+Source: /Users/lu/LuBot_hybrid/docs/Testing_Best_Practices.txt
+
+  R - Requirements: Write tests FIRST that define the behavior you want
+  E - Execute:      Implement ONE task to make ONE test pass
+  C - Check:        Run tests, verify red -> green
+  R - Repeat:       Move to next test/task
+
+Hard rules:
+  1. Tests come BEFORE implementation. No exceptions.
+  2. NEVER weaken a test to make it pass — fix the implementation.
+  3. Mock EXTERNAL boundaries only: NWS HTTP, Postgres, sentence-transformers,
+     the LLM serving endpoint. Internal logic runs for real.
+  4. Zero failures before moving forward. No "pre-existing failure" excuses.
+  5. Parametrize rather than copy-paste near-identical tests.
+  6. Test the PIPELINE, not the model output. Mock the embedder, assert on
+     structure (384 floats, one row per chunk, correct chunk_index ordering).
+  7. Markers: @pytest.mark.fast for unit tests, @pytest.mark.live for tests
+     that hit the real NWS API or a real Lakebase.
+
+--------------------------------------------------------------------------------
+DATA SOURCE DECISION
+--------------------------------------------------------------------------------
+CHOSEN: National Weather Service API (api.weather.gov)
+
+Why:
+  - No API key. Zero auth plumbing, so the effort goes into the pipeline.
+  - Genuinely unstructured. An alert's `description` is 1000-2000 characters
+    of structured-ish prose (WHAT / WHERE / WHEN / IMPACTS sections) and the
+    `instruction` field is a separate block of protective-action text. Neither
+    is queryable by any structured field.
+  - TWO document flavours from ONE source, which satisfies the multi-source
+    retrieval-filter goal without the incoherence of mixing two different
+    providers' schemas:
+        source_type = 'alert'    -> /alerts/active?area={state}
+        source_type = 'forecast' -> /gridpoints/{office}/{x},{y}/forecast
+  - Live and always changing. 329 alerts were active nationwide at the time
+    this plan was written, so there is always real data to demo against.
+  - Public domain. No licensing question about storing or republishing it.
+
+Rejected:
+  - OpenWeatherMap: needs a key, and its free-text is a thin one-line
+    `weather.description` ("light rain"). Not enough prose to embed
+    meaningfully — the vectors would be near-duplicates.
+  - NOAA CPC discussion products: excellent long-form text, but published as
+    fixed-width plain-text files on a schedule rather than a JSON API. Parsing
+    them is a text-munging exercise, not a pipeline exercise.
+
+Requirement of the NWS API: it demands a descriptive User-Agent header
+identifying the application and a contact address. Requests without one are
+rejected. weather_client.py sets it, and it is configurable via env.
+
+--------------------------------------------------------------------------------
+SCHEMA DECISIONS
+--------------------------------------------------------------------------------
+
+weather_documents — the raw document store
+    id              TEXT PK       stable dedup key (see below)
+    location        TEXT          "Chicago, IL" or "41.8781,-87.6298"
+    latitude        DOUBLE PRECISION
+    longitude       DOUBLE PRECISION
+    source_type     TEXT          'alert' | 'forecast'   (CHECK constrained)
+    event           TEXT          "Flash Flood Warning" / "Tonight"
+    headline        TEXT          NWS headline, or forecast shortForecast
+    narrative_text  TEXT NOT NULL the free text that gets embedded
+    issued_at       TIMESTAMPTZ   alert `sent`   / forecast generatedAt
+    effective_at    TIMESTAMPTZ   alert `effective` / forecast startTime
+    expires_at      TIMESTAMPTZ   alert `expires`   / forecast endTime
+    severity        TEXT          alert severity; NULL for forecasts
+    payload         JSONB NOT NULL raw API object, for provenance
+    content_hash    TEXT NOT NULL sha256 of narrative_text
+    synced_at       TIMESTAMPTZ
+
+  Stable ids (so re-running sync updates rather than duplicates):
+    alerts    -> the NWS alert URN, which is already globally unique and
+                 versioned by the issuing office.
+    forecasts -> "forecast:{office}/{gx},{gy}:{sha256(...)[:16]}"
+                 hashed over location + startTime + endTime. Keyed on the TIME
+                 WINDOW, never the period name: NWS relabels the same window as
+                 the day advances ("This Afternoon" is part of "Today" in an
+                 earlier issuance), so a name-keyed id would store the same
+                 forecast twice under two keys. A re-fetch of the same window is
+                 the same document; revised text for it is caught by
+                 content_hash instead.
+
+  content_hash is the piece a naive design leaves out, and
+  it is what makes re-embedding correct rather than merely idempotent. NWS
+  re-issues an alert under the same id with amended text. Keying "has this
+  been embedded" on document_id alone would leave the old vector in place and
+  silently serve stale text. Keying it on (document_id, content_hash) means
+  amended text is detected and re-embedded, and unchanged text is skipped.
+
+weather_embeddings — the vector store
+    id            TEXT PK        "{document_id}::{chunk_index}"
+    document_id   TEXT NOT NULL  FK -> weather_documents(id) ON DELETE CASCADE
+    chunk_index   INT NOT NULL
+    chunk_text    TEXT NOT NULL  the exact text that produced this vector
+    embedding     VECTOR(384) NOT NULL
+    model_name    TEXT NOT NULL
+    content_hash  TEXT NOT NULL  matches the document revision embedded
+    created_at    TIMESTAMPTZ
+    UNIQUE (document_id, chunk_index)
+    INDEX USING hnsw (embedding vector_cosine_ops)
+
+  chunk_text is stored alongside the vector rather than recomputed from the
+  document at query time. Recomputing would mean the retrieved passage depends
+  on the chunker's current settings, so changing CHUNK_SIZE later would silently
+  change what past vectors claim to represent.
+
+  The FK is ON DELETE CASCADE so purging expired weather documents cannot
+  strand orphan vectors that still answer searches.
+
+Chunking: CHUNK_SIZE=800 chars, CHUNK_OVERLAP=100 chars, sliding window,
+snapped to whitespace so a window never splits a word.
+  - 800 is comfortably inside all-MiniLM-L6-v2's 256-token (~1000 char)
+    input limit. Anything longer is silently truncated by the model, which
+    is the quiet failure mode worth designing away from.
+  - Most alerts are one or two chunks. The embedded text is
+    description + "\n\n" + instruction concatenated, which pushes plenty of
+    them past 800 and makes chunking load-bearing rather than decorative.
+  - Text that fits in one window is stored as a single chunk with no
+    overlap padding.
+
+Embedding model: sentence-transformers/all-MiniLM-L6-v2, 384 dimensions.
+Kept deliberately identical to the existing news pipeline so both vector
+tables are queryable with the same distance operator and the same query
+encoder. A model -> dimension map raises on an unknown model rather than
+letting a wrong-width vector reach a VECTOR(384) column.
+
+NOTE: this is the one place the project departs from the NVIDIA-first rule
+used everywhere else. Cross-pipeline vector compatibility is the constraint
+here, and it is a hard requirement of this project.
+
+--------------------------------------------------------------------------------
+WRITE PATH — AND ONE THING DONE DIFFERENTLY
+--------------------------------------------------------------------------------
+Embeddings are written as real pgvector values on the FIRST insert, via
+psycopg2 execute_values with an explicit %s::vector cast in the template.
+
+A common pattern writes them as `double precision[]` and then
+instructs the operator to run, by hand, afterwards:
+
+    UPDATE ticker_news_embeddings SET embedding = embedding::vector ...
+
+That is a workaround for a Spark-JDBC write path that this project does not
+use. Carrying it over would mean:
+  - a table that is in a broken, unqueryable state between the job finishing
+    and a human remembering to run a manual statement, and
+  - an HNSW index that cannot be used until after that statement runs.
+
+Casting inline removes the manual step and the window where the data is wrong.
+No Spark anywhere on the write path.
+
+--------------------------------------------------------------------------------
+REQUIREMENTS
+--------------------------------------------------------------------------------
+Part 1 — Harvest
+  R1   weather_client.py resolves a location to an NWS gridpoint via /points
+  R2   Accepts both "City, ST" and "lat,lon" location forms
+  R3   Fetches active alerts for a location's state
+  R4   Fetches the multi-day narrative forecast for a location's gridpoint
+  R5   Normalizes both into one document schema
+  R6   Stable dedup ids: alert URN; hashed key for forecasts
+  R7   Sets the NWS-required descriptive User-Agent
+  R8   Rate-limits outbound calls and retries transient failures
+  R9   weather_documents created via idempotent DDL
+  R10  POST /weather/sync fetches, normalizes, upserts, returns counts
+
+Part 2 — Vectorize
+  R11  Reads unembedded rows (LEFT JOIN on document_id + content_hash)
+  R12  Sliding-window chunker, 800/100, whitespace-snapped
+  R13  Embeds with all-MiniLM-L6-v2 (384-dim), batched
+  R14  weather_embeddings has a real VECTOR(384) column
+  R15  Writes via psycopg2 execute_values with %s::vector — no Spark
+  R16  HNSW index using vector_cosine_ops
+  R17  Runs both as a Databricks notebook and as a plain CLI script
+
+Part 3 — Retrieve
+  R18  POST /weather/search embeds the query and searches by cosine
+  R19  Query encoder loaded ONCE at module level, not per request
+  R20  Returns location, headline, chunk_text, similarity
+  R21  Empty embeddings table -> empty results, HTTP 200, not a crash
+  R22  Missing/blank/non-string query -> HTTP 400 with a clear message
+  R23  top_k clamped to 1..20
+
+Stretch
+  S1   GET /weather/search?query=... adds an LLM summary of the top results
+  S2   Re-running sync upserts instead of duplicating
+  S3   Scheduled job re-syncs alerts every N minutes
+  S4   Two source types, retrieval filterable by source_type
+  S5   HNSW benchmark: latency with vs without the index, plus recall@k
+
+Beyond spec
+  X1   Browser search UI, accessible (ARIA) from the first commit
+  X2   Pooled Lakebase connections
+  X3   Full pytest suite, external boundaries mocked
+
+--------------------------------------------------------------------------------
+PHASES
+--------------------------------------------------------------------------------
+Phase 0  Scaffold, plan, deps, licence                          [R-]
+Phase 1  weather_client.py + tests                              [R1-R8]
+Phase 2  schema.sql + lakebase.py + repository.py + tests       [R9, R11, R14, R16]
+Phase 3  embeddings.py chunker + encoder + tests                [R12, R13, R19]
+Phase 4  app.py sync + search endpoints + tests                 [R10, R18, R20-R23]
+Phase 5  ingest_weather_embeddings.py                           [R15, R17]
+Phase 6  RAG summary, scheduled job, benchmark                  [S1, S3, S5]
+Phase 7  Search UI                                              [X1]
+Phase 8  Provision Lakebase, run end to end, screenshots        [all]
+Phase 9  READMEs, packaging                                     [-]
+
+--------------------------------------------------------------------------------
+RISKS
+--------------------------------------------------------------------------------
+1. Lakebase pauses when idle.
+   A previously created instance was unreachable three days after last use:
+   "FATAL: External authorization failed ... could be due to paused instances".
+   This reads like a credentials problem and is not one. Resume the instance
+   in the UI before assuming anything is misconfigured.
+
+2. Password auth is OFF by default on a new Lakebase project.
+   Project settings -> Database connections -> tick "Password (Native
+   postgres roles)". Without it, roles only ever get 1-hour OAuth tokens.
+
+3. Secret scopes are workspace-wide and this is a shared workspace.
+   Every scope name gets the `lubo-` prefix. A generic name like `database`
+   may already exist, owned by someone else, and will fail with
+   PermissionDenied on write.
+
+4. Pasted connection URLs can carry embedded whitespace.
+   It surfaces as a DNS failure and sends the investigation the wrong way.
+   _clean_url collapses whitespace on every URL-form DSN on the way in.
+
+5. torch is a heavy dependency for a deployed app container.
+   sentence-transformers pulls torch (~800MB on linux). Mitigations: pin the
+   CPU-only wheel, load the model lazily so startup and /healthz do not block
+   on it, and treat the deployed app as best-effort. The notebook and the
+   local CLI path do not depend on the app deploying.
+
+6. NWS returns zero active alerts for a quiet state.
+   TX returned 0 while CA returned 31 during planning. Empty is a valid
+   answer, not an error. Sync must report 0 cleanly and the demo should pick
+   locations with live weather.
+
+7. HNSW is an approximate index.
+   The benchmark must report recall against exact search, not just latency.
+   A latency win that quietly drops relevant results is not a win.
+
+8. pgvector must be enabled on the new instance.
+   CREATE EXTENSION IF NOT EXISTS vector runs as the first statement of
+   schema.sql. If the role lacks permission, this fails early and loudly
+   rather than at the first vector insert.

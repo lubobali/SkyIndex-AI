@@ -1,0 +1,4 @@
+# Test-only dependencies. Not installed by the deployed Databricks App.
+-r requirements.txt
+
+pytest>=8.2.0

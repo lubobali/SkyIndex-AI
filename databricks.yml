@@ -1,0 +1,24 @@
+# Databricks Asset Bundle for SkyIndex-AI.
+#
+# Keeps the scheduled refresh job in version control alongside the code it
+# runs, so the schedule is reviewable and reproducible rather than a thing
+# somebody once clicked in a UI.
+#
+#   databricks bundle deploy -t dev
+#   databricks bundle run refresh_weather_index -t dev
+#
+# The equivalent click-path is documented in README_WEATHER.md for anyone
+# without the CLI.
+
+bundle:
+  name: skyindex-ai
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-7b106152-caf3.cloud.databricks.com

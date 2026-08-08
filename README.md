@@ -81,6 +81,12 @@ The second example is the one worth dwelling on. The forecast text never says
 | ![documents table](screenshots/08-lakebase-weather-documents.png) | ![deployments](screenshots/10-databricks-app-deployments.png) |
 | **`weather_documents` in Lakebase.** Note the stable ids (`forecast:BOU/63,61:…`) and coordinates rounded to 4 decimals. | **Deployed on Databricks Apps**, every step green. |
 
+![scheduled job run](screenshots/11-scheduled-job-run-on-databricks.png)
+
+**The scheduled refresh, running on Databricks.** Not a YAML file claiming a
+schedule — a Workflow that ran, synced 128 documents, correctly found 0 needing
+re-embedding because nothing had changed, and now fires every 30 minutes.
+
 ---
 
 ## Architecture

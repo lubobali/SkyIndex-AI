@@ -16,27 +16,21 @@ resources:
         Harvests active NWS alerts and gridpoint forecasts into weather_documents,
         then embeds any document that is new or whose text has been amended.
 
+      # A notebook task, not spark_python_task, and the reason is specific:
+      # installing psycopg2-binary into a kernel that has already loaded a
+      # different build of the same native extension aborts the process with
+      # SIGABRT on `import psycopg2` - a crash, not an exception. The fix is to
+      # restart the interpreter after installing, and only a notebook can do
+      # that mid-run. The notebook installs its own dependencies, so no
+      # environment spec is needed here.
       tasks:
         - task_key: refresh
-          spark_python_task:
-            python_file: ../scripts/refresh_weather_index.py
-            parameters:
-              # api.weather.gov requires a descriptive User-Agent and the
-              # client refuses to start without one. A Workflow task has no
-              # environment of its own, so it is passed as a parameter.
-              - "--user-agent"
-              - "(SkyIndex-AI, lubobali23@gmail.com)"
-          environment_key: default
-
-      environments:
-        - environment_key: default
-          spec:
-            client: "2"
-            dependencies:
-              - sentence-transformers
-              - psycopg2-binary
-              - requests
-              - databricks-sdk
+          notebook_task:
+            notebook_path: ../notebooks/refresh_weather_index_job.py
+            base_parameters:
+              user_agent: "(SkyIndex-AI, lubobali23@gmail.com)"
+              locations: "Chicago, IL;Austin, TX;Denver, CO;Miami, FL;Seattle, WA"
+              limit: "50"
 
       schedule:
         # Every 30 minutes.

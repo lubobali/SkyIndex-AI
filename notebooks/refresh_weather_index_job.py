@@ -6,25 +6,37 @@
 # MAGIC all the logic lives in `scripts/refresh_weather_index.py`, which also runs
 # MAGIC as a plain CLI script. One implementation, two entry points.
 # MAGIC
-# MAGIC **Why a notebook rather than a Python-script task.** Installing
-# MAGIC `psycopg2-binary` into a running kernel that has already loaded a
-# MAGIC different build of the same native extension aborts the process with
-# MAGIC SIGABRT the moment `import psycopg2` runs — not an exception, a crash.
-# MAGIC The fix is to restart the Python interpreter after installing, and only a
-# MAGIC notebook can do that mid-run. A `spark_python_task` has no way to.
+# MAGIC **Do not install `psycopg2-binary` here.** Databricks Runtime already
+# MAGIC ships `psycopg2` 2.9.11, in `/databricks/python3/...`, which pip refuses
+# MAGIC to uninstall because it sits outside the ephemeral environment:
+# MAGIC
+# MAGIC ```
+# MAGIC Not uninstalling psycopg2 at /databricks/python3/lib/python3.12/site-packages,
+# MAGIC outside environment
+# MAGIC ```
+# MAGIC
+# MAGIC Installing `psycopg2-binary` on top therefore leaves two competing builds
+# MAGIC of the same native extension in one interpreter, and `import psycopg2`
+# MAGIC aborts the process with SIGABRT - a crash, not an exception, so no
+# MAGIC try/except helps and restarting the kernel does not either, because both
+# MAGIC copies are still present. The runtime's own psycopg2 works fine; the only
+# MAGIC winning move is not to install a second one.
+# MAGIC
+# MAGIC **Why a notebook rather than a Python-script task.** `sentence-transformers`
+# MAGIC still has to be installed at runtime, and any pip install into a live
+# MAGIC kernel needs an interpreter restart afterwards. Only a notebook can do
+# MAGIC that mid-run; a `spark_python_task` has no way to.
 
 # COMMAND ----------
 
 # DBTITLE 1,Install dependencies
-# MAGIC %pip uninstall -y psycopg2 psycopg2-binary
-# MAGIC %pip install -q psycopg2-binary sentence-transformers requests databricks-sdk
+# psycopg2 is deliberately absent - the runtime provides it. requests and
+# databricks-sdk ship with the runtime too.
+# MAGIC %pip install -q sentence-transformers
 
 # COMMAND ----------
 
-# DBTITLE 1,Restart the interpreter so the freshly built extensions load cleanly
-# This is the line whose absence crashed the job. Everything above installed
-# into an interpreter that had already imported the old psycopg2; nothing below
-# would work without a restart.
+# DBTITLE 1,Restart the interpreter so the freshly installed packages load cleanly
 dbutils.library.restartPython()
 
 # COMMAND ----------

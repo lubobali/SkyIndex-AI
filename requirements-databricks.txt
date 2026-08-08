@@ -1,0 +1,18 @@
+# Dependencies for running on Databricks. NOT the same as requirements.txt,
+# and the difference is deliberate.
+#
+# psycopg2-binary is absent. Databricks Runtime already ships psycopg2 2.9.11
+# under /databricks/python3/, which pip will not uninstall:
+#
+#   Not uninstalling psycopg2 at /databricks/python3/lib/python3.12/site-packages,
+#   outside environment
+#
+# Installing psycopg2-binary alongside it leaves two builds of the same native
+# extension in one interpreter, and `import psycopg2` aborts the process with
+# SIGABRT. Not an exception - a crash, which no try/except catches and no
+# kernel restart fixes, because both copies remain.
+#
+# requests and databricks-sdk also ship with the runtime, so only the embedding
+# stack genuinely needs installing.
+
+sentence-transformers>=3.0.0
